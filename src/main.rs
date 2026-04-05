@@ -7,8 +7,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Position},
     prelude::*,
     style::{Color, Modifier, Style},
-    widgets::{Block, Paragraph},
+    symbols::Marker,
+    widgets::{
+        Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph,
+    },
 };
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::io::{self, stdout, Stdout};
@@ -21,7 +25,10 @@ struct Theme {
     pending_fg: Color,
     bg_color: Color,
     stats_fg: Color,
-
+    chart_fg: Color,
+    axis_fg: Color,
+    grid_fg: Color,
+    label_fg: Color,
 }
 
 impl Theme {
@@ -32,7 +39,10 @@ impl Theme {
             pending_fg: Color::DarkGray,
             bg_color: Color::Reset,
             stats_fg: Color::Green,
-
+            chart_fg: Color::Cyan,
+            axis_fg: Color::White,
+            grid_fg: Color::DarkGray,
+            label_fg: Color::White,
         }
     }
 
@@ -43,7 +53,10 @@ impl Theme {
             pending_fg: Color::Rgb(98, 114, 164),
             bg_color: Color::Rgb(40, 42, 54),
             stats_fg: Color::Rgb(80, 250, 123),
-
+            chart_fg: Color::Rgb(139, 233, 253),
+            axis_fg: Color::Rgb(248, 248, 242),
+            grid_fg: Color::Rgb(98, 114, 164),
+            label_fg: Color::Rgb(248, 248, 242),
         }
     }
 
@@ -54,7 +67,10 @@ impl Theme {
             pending_fg: Color::Rgb(117, 113, 94),
             bg_color: Color::Rgb(39, 40, 34),
             stats_fg: Color::Rgb(166, 226, 46),
-
+            chart_fg: Color::Rgb(253, 151, 31),
+            axis_fg: Color::Rgb(248, 248, 242),
+            grid_fg: Color::Rgb(117, 113, 94),
+            label_fg: Color::Rgb(248, 248, 242),
         }
     }
 
@@ -65,7 +81,10 @@ impl Theme {
             pending_fg: Color::Rgb(76, 86, 106),
             bg_color: Color::Rgb(46, 52, 64),
             stats_fg: Color::Rgb(163, 190, 140),
-
+            chart_fg: Color::Rgb(136, 192, 208),
+            axis_fg: Color::Rgb(216, 222, 233),
+            grid_fg: Color::Rgb(76, 86, 106),
+            label_fg: Color::Rgb(216, 222, 233),
         }
     }
 
@@ -76,7 +95,10 @@ impl Theme {
             pending_fg: Color::Rgb(102, 92, 84),
             bg_color: Color::Rgb(40, 40, 40),
             stats_fg: Color::Rgb(184, 187, 38),
-
+            chart_fg: Color::Rgb(215, 153, 33),
+            axis_fg: Color::Rgb(235, 219, 178),
+            grid_fg: Color::Rgb(102, 92, 84),
+            label_fg: Color::Rgb(235, 219, 178),
         }
     }
 
@@ -87,9 +109,17 @@ impl Theme {
             pending_fg: Color::Rgb(127, 124, 122),
             bg_color: Color::Rgb(31, 28, 45),
             stats_fg: Color::Rgb(152, 203, 161),
-
+            chart_fg: Color::Rgb(197, 164, 230),
+            axis_fg: Color::Rgb(224, 222, 244),
+            grid_fg: Color::Rgb(127, 124, 122),
+            label_fg: Color::Rgb(224, 222, 244),
         }
     }
+}
+
+enum AppMode {
+    Typing,
+    Results,
 }
 
 struct App {
@@ -101,6 +131,12 @@ struct App {
     themes: Vec<Theme>,
     start_time: Option<Instant>,
     end_time: Option<Instant>,
+    mode: AppMode,
+    wpm_history: VecDeque<(f64, f64)>,
+    last_wpm_sample: Option<Instant>,
+    last_wpm_value: f64,
+    peak_wpm: f64,
+    raw_wpm: f64,
 }
 
 impl App {
@@ -124,6 +160,12 @@ impl App {
             themes,
             start_time: None,
             end_time: None,
+            mode: AppMode::Typing,
+            wpm_history: VecDeque::new(),
+            last_wpm_sample: None,
+            last_wpm_value: 0.0,
+            peak_wpm: 0.0,
+            raw_wpm: 0.0,
         }
     }
 
@@ -136,6 +178,12 @@ impl App {
         self.input_text = String::new();
         self.start_time = None;
         self.end_time = None;
+        self.mode = AppMode::Typing;
+        self.wpm_history.clear();
+        self.last_wpm_sample = None;
+        self.last_wpm_value = 0.0;
+        self.peak_wpm = 0.0;
+        self.raw_wpm = 0.0;
     }
 
     fn total_chars(&self) -> usize {
@@ -171,18 +219,6 @@ impl App {
         }
     }
 
-    fn wpm(&self) -> f64 {
-        let elapsed = self.elapsed_secs();
-        if elapsed < 0.01 {
-            return 0.0;
-        }
-        let input_chars: Vec<char> = self.input_text.chars().collect();
-        let correct = self.count_correct(&input_chars);
-        let words = correct as f64 / 5.0;
-        let minutes = elapsed / 60.0;
-        words / minutes
-    }
-
     fn count_correct(&self, input_chars: &[char]) -> usize {
         let mut correct = 0;
         let mut offset = 0;
@@ -198,6 +234,18 @@ impl App {
         correct
     }
 
+    fn wpm(&self) -> f64 {
+        let elapsed = self.elapsed_secs();
+        if elapsed < 0.01 {
+            return 0.0;
+        }
+        let input_chars: Vec<char> = self.input_text.chars().collect();
+        let correct = self.count_correct(&input_chars);
+        let words = correct as f64 / 5.0;
+        let minutes = elapsed / 60.0;
+        words / minutes
+    }
+
     fn accuracy(&self) -> f64 {
         let input_chars: Vec<char> = self.input_text.chars().collect();
         if input_chars.is_empty() {
@@ -206,6 +254,56 @@ impl App {
         let correct = self.count_correct(&input_chars);
         (correct as f64 / input_chars.len() as f64) * 100.0
     }
+
+    fn sample_wpm(&mut self) {
+        if let Some(start) = self.start_time {
+            let now = Instant::now();
+            let elapsed = now.duration_since(start).as_secs_f64();
+            if elapsed < 0.5 {
+                return;
+            }
+            if let Some(last_sample) = self.last_wpm_sample {
+                let delta = now.duration_since(last_sample).as_secs_f64();
+                if delta < 1.0 {
+                    return;
+                }
+            }
+            let input_chars: Vec<char> = self.input_text.chars().collect();
+            let correct = self.count_correct(&input_chars);
+            let words = correct as f64 / 5.0;
+            let minutes = elapsed / 60.0;
+            let current_wpm = if minutes > 0.0 {
+                words / minutes
+            } else {
+                0.0
+            };
+            self.last_wpm_value = current_wpm;
+            if current_wpm > self.peak_wpm {
+                self.peak_wpm = current_wpm;
+            }
+            self.wpm_history.push_back((elapsed, current_wpm));
+            self.last_wpm_sample = Some(now);
+        }
+    }
+
+    fn calc_raw_wpm(&self) -> f64 {
+        let elapsed = self.elapsed_secs();
+        if elapsed < 0.01 {
+            return 0.0;
+        }
+        let total_typed = self.input_text.chars().count() as f64;
+        let words = total_typed / 5.0;
+        let minutes = elapsed / 60.0;
+        words / minutes
+    }
+
+    fn avg_wpm(&self) -> f64 {
+        if self.wpm_history.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = self.wpm_history.iter().map(|(_, w)| w).sum();
+        sum / self.wpm_history.len() as f64
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -213,7 +311,8 @@ fn main() -> io::Result<()> {
     let target_text = if args.len() > 1 {
         let file_path = &args[1];
         fs::read_to_string(file_path).map_err(|e| {
-            io::Error::other(
+            io::Error::new(
+                io::ErrorKind::Other,
                 format!("Failed to read file '{}': {}", file_path, e),
             )
         })?
@@ -247,45 +346,68 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io::Result<()> {
     while !app.should_quit {
-        terminal.draw(|frame| ui(frame, app))?;
+        terminal.draw(|frame| {
+            match app.mode {
+                AppMode::Typing => ui_typing(frame, app),
+                AppMode::Results => ui_results(frame, &*app),
+            }
+        })?;
 
         if let Event::Key(key) = event::read()?
             && (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat) {
-                match key.code {
-                    KeyCode::Esc => app.should_quit = true,
-                    KeyCode::Backspace => {
-                        app.input_text.pop();
-                    }
-                    KeyCode::Delete => {
-                        app.reset();
-                    }
-                    KeyCode::Tab => {
-                        app.cycle_theme();
-                    }
-                    KeyCode::Enter => {
-                        let total = app.total_chars();
-                        if app.input_text.chars().count() < total {
-                            if app.start_time.is_none() {
-                                app.start_time = Some(Instant::now());
+                match app.mode {
+                    AppMode::Typing => {
+                        match key.code {
+                            KeyCode::Esc => app.should_quit = true,
+                            KeyCode::Backspace => {
+                                app.input_text.pop();
                             }
-                            app.input_text.push('\n');
-                        }
-                    }
-                    KeyCode::Char(c) => {
-                        let total = app.total_chars();
-                        if app.input_text.chars().count() < total {
-                            if app.start_time.is_none() {
-                                app.start_time = Some(Instant::now());
+                            KeyCode::Delete => {
+                                app.reset();
                             }
-                            app.input_text.push(c);
+                            KeyCode::Tab => {
+                                app.cycle_theme();
+                            }
+                            KeyCode::Enter => {
+                                let total = app.total_chars();
+                                if app.input_text.chars().count() < total {
+                                    if app.start_time.is_none() {
+                                        app.start_time = Some(Instant::now());
+                                    }
+                                    app.input_text.push('\n');
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                let total = app.total_chars();
+                                if app.input_text.chars().count() < total {
+                                    if app.start_time.is_none() {
+                                        app.start_time = Some(Instant::now());
+                                    }
+                                    app.input_text.push(c);
+                                }
+                            }
+                            _ => {}
                         }
-                    }
-                    _ => {}
-                }
 
-                let total = app.total_chars();
-                if app.input_text.chars().count() >= total && app.end_time.is_none() {
-                    app.end_time = Some(Instant::now());
+                        let total = app.total_chars();
+                        if app.input_text.chars().count() >= total && app.end_time.is_none() {
+                            app.end_time = Some(Instant::now());
+                            app.raw_wpm = app.calc_raw_wpm();
+                            app.mode = AppMode::Results;
+                        }
+                    }
+                    AppMode::Results => {
+                        match key.code {
+                            KeyCode::Esc => app.should_quit = true,
+                            KeyCode::Delete | KeyCode::Enter | KeyCode::Char(' ') => {
+                                app.reset();
+                            }
+                            KeyCode::Tab => {
+                                app.cycle_theme();
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
     }
@@ -302,7 +424,9 @@ fn format_time(secs: f64) -> String {
     }
 }
 
-fn ui(frame: &mut Frame, app: &App) {
+fn ui_typing(frame: &mut Frame, app: &mut App) {
+    app.sample_wpm();
+
     if app.theme.bg_color != Color::Reset {
         frame.render_widget(
             Block::default().style(Style::default().bg(app.theme.bg_color)),
@@ -416,4 +540,200 @@ fn ui(frame: &mut Frame, app: &App) {
         );
         frame.render_widget(stats, stats_area);
     }
+}
+
+fn ui_results(frame: &mut Frame, app: &App) {
+    if app.theme.bg_color != Color::Reset {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(app.theme.bg_color)),
+            frame.area(),
+        );
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Min(10),
+            Constraint::Length(1),
+        ])
+        .split(frame.area());
+
+    let title_area = chunks[0];
+    let stats_area = chunks[1];
+    let chart_area = chunks[2];
+    let footer_area = chunks[3];
+
+    let title = Paragraph::new(" Results ").style(
+        Style::default()
+            .fg(app.theme.label_fg)
+            .add_modifier(Modifier::BOLD),
+    );
+    frame.render_widget(title, title_area);
+
+    let elapsed = app.elapsed_secs();
+    let wpm = app.wpm();
+    let accuracy = app.accuracy();
+    let total = app.total_chars();
+    let input_chars: Vec<char> = app.input_text.chars().collect();
+    let correct = app.count_correct(&input_chars);
+    let errors = input_chars.len().saturating_sub(correct);
+
+    let stats_lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("{:.0}", wpm),
+                Style::default()
+                    .fg(app.theme.chart_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" WPM", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{:.0}", app.avg_wpm()),
+                Style::default().fg(app.theme.stats_fg),
+            ),
+            Span::styled(" avg WPM", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{:.0}", app.peak_wpm),
+                Style::default().fg(app.theme.chart_fg),
+            ),
+            Span::styled(" peak WPM", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{:.0}", app.raw_wpm),
+                Style::default().fg(app.theme.stats_fg),
+            ),
+            Span::styled(" raw WPM", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{:.1}%", accuracy),
+                Style::default().fg(app.theme.correct_fg),
+            ),
+            Span::styled(" accuracy", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{}", format_time(elapsed)),
+                Style::default().fg(app.theme.stats_fg),
+            ),
+            Span::styled(" time", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{}", total),
+                Style::default().fg(app.theme.label_fg),
+            ),
+            Span::styled(" chars", Style::default().fg(app.theme.label_fg)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!("{}", correct),
+                Style::default().fg(app.theme.correct_fg),
+            ),
+            Span::styled(" correct  ", Style::default().fg(app.theme.label_fg)),
+            Span::styled(
+                format!("{}", errors),
+                Style::default().fg(app.theme.incorrect_fg),
+            ),
+            Span::styled(" errors", Style::default().fg(app.theme.label_fg)),
+        ]),
+    ];
+
+    let stats_widget = Paragraph::new(stats_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.theme.grid_fg))
+                .title(" Stats "),
+        )
+        .alignment(Alignment::Center);
+    frame.render_widget(stats_widget, stats_area);
+
+    if !app.wpm_history.is_empty() {
+        let max_wpm = app
+            .wpm_history
+            .iter()
+            .map(|(_, w)| *w)
+            .fold(0.0_f64, f64::max)
+            .ceil();
+        let max_time = app
+            .wpm_history
+            .iter()
+            .map(|(t, _)| *t)
+            .fold(0.0_f64, f64::max);
+
+        let data_points: Vec<(f64, f64)> = app
+            .wpm_history
+            .iter()
+            .map(|(t, w)| (*t, *w))
+            .collect();
+
+        let datasets = vec![Dataset::default()
+            .name("WPM")
+            .data(&data_points)
+            .graph_type(GraphType::Line)
+            .marker(Marker::Braille)
+            .style(Style::default().fg(app.theme.chart_fg))];
+
+        let x_step = if max_time.ceil() as usize > 5 {
+            (max_time.ceil() as usize / 5).max(1)
+        } else {
+            1
+        };
+        let y_step = if max_wpm as usize > 5 {
+            (max_wpm as usize / 5).max(1)
+        } else {
+            1
+        };
+
+        let x_axis = Axis::default()
+            .title("Time (s)")
+            .style(Style::default().fg(app.theme.axis_fg))
+            .bounds([0.0, max_time])
+            .labels(
+                (0..=max_time.ceil() as usize)
+                    .step_by(x_step)
+                    .map(|v| format!("{}", v))
+                    .collect::<Vec<_>>(),
+            );
+
+        let y_axis = Axis::default()
+            .title("WPM")
+            .style(Style::default().fg(app.theme.axis_fg))
+            .bounds([0.0, max_wpm])
+            .labels(
+                (0..=max_wpm as usize)
+                    .step_by(y_step)
+                    .map(|v| format!("{}", v))
+                    .collect::<Vec<_>>(),
+            );
+
+        let chart = Chart::new(datasets)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.grid_fg))
+                    .title(" WPM Over Time "),
+            )
+            .x_axis(x_axis)
+            .y_axis(y_axis);
+
+        frame.render_widget(chart, chart_area);
+    }
+
+    let footer = Paragraph::new(" Delete/Enter/Space: retry  |  Tab: theme  |  Esc: quit ")
+        .style(
+            Style::default()
+                .fg(app.theme.label_fg)
+                .add_modifier(Modifier::DIM),
+        )
+        .alignment(Alignment::Center);
+    frame.render_widget(footer, footer_area);
 }
