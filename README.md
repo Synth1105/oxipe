@@ -15,9 +15,7 @@ A fast, customizable terminal-based typing speed test and practice application b
 Ensure you have [Rust](https://www.rust-lang.org/tools/install) installed on your system.
 
 ```bash
-git clone https://github.com/yourusername/oxipe.git
-cd oxipe
-cargo build --release
+cargo install oxipe
 ```
 
 ## Usage
@@ -25,13 +23,13 @@ cargo build --release
 Run with the default pangram sentence:
 
 ```bash
-cargo run --release
+oxipe
 ```
 
 Run with a custom text file:
 
 ```bash
-cargo run --release path/to/textfile.txt
+oxipe path/to/textfile.txt
 ```
 
 ## Keybindings
@@ -59,4 +57,4 @@ Press `Tab` to cycle through the available themes:
 
 ## License
 
-MIT
+LGPL-2.1
