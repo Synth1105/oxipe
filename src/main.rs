@@ -20,6 +20,8 @@ struct Theme {
     incorrect_fg: Color,
     pending_fg: Color,
     bg_color: Color,
+    stats_fg: Color,
+
 }
 
 impl Theme {
@@ -29,6 +31,8 @@ impl Theme {
             incorrect_fg: Color::Red,
             pending_fg: Color::DarkGray,
             bg_color: Color::Reset,
+            stats_fg: Color::Green,
+
         }
     }
 
@@ -38,6 +42,8 @@ impl Theme {
             incorrect_fg: Color::Rgb(255, 85, 85),
             pending_fg: Color::Rgb(98, 114, 164),
             bg_color: Color::Rgb(40, 42, 54),
+            stats_fg: Color::Rgb(80, 250, 123),
+
         }
     }
 
@@ -47,6 +53,8 @@ impl Theme {
             incorrect_fg: Color::Rgb(249, 38, 114),
             pending_fg: Color::Rgb(117, 113, 94),
             bg_color: Color::Rgb(39, 40, 34),
+            stats_fg: Color::Rgb(166, 226, 46),
+
         }
     }
 
@@ -56,6 +64,8 @@ impl Theme {
             incorrect_fg: Color::Rgb(191, 97, 106),
             pending_fg: Color::Rgb(76, 86, 106),
             bg_color: Color::Rgb(46, 52, 64),
+            stats_fg: Color::Rgb(163, 190, 140),
+
         }
     }
 
@@ -65,6 +75,8 @@ impl Theme {
             incorrect_fg: Color::Rgb(204, 36, 29),
             pending_fg: Color::Rgb(102, 92, 84),
             bg_color: Color::Rgb(40, 40, 40),
+            stats_fg: Color::Rgb(184, 187, 38),
+
         }
     }
 
@@ -74,6 +86,8 @@ impl Theme {
             incorrect_fg: Color::Rgb(235, 111, 111),
             pending_fg: Color::Rgb(127, 124, 122),
             bg_color: Color::Rgb(31, 28, 45),
+            stats_fg: Color::Rgb(152, 203, 161),
+
         }
     }
 }
@@ -130,8 +144,7 @@ impl App {
     }
 
     fn cursor_pos(&self) -> (usize, usize) {
-        let input: Vec<char> = self.input_text.chars().collect();
-        let input_len = input.len();
+        let input_len = self.input_text.chars().count();
         let mut count = 0;
         for (line_idx, line) in self.target_lines.iter().enumerate() {
             if line_idx > 0 {
@@ -200,8 +213,7 @@ fn main() -> io::Result<()> {
     let target_text = if args.len() > 1 {
         let file_path = &args[1];
         fs::read_to_string(file_path).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
+            io::Error::other(
                 format!("Failed to read file '{}': {}", file_path, e),
             )
         })?
@@ -237,8 +249,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
     while !app.should_quit {
         terminal.draw(|frame| ui(frame, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat {
+        if let Event::Key(key) = event::read()?
+            && (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat) {
                 match key.code {
                     KeyCode::Esc => app.should_quit = true,
                     KeyCode::Backspace => {
@@ -276,7 +288,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
                     app.end_time = Some(Instant::now());
                 }
             }
-        }
     }
     Ok(())
 }
@@ -326,11 +337,7 @@ fn ui(frame: &mut Frame, app: &App) {
     let area_width = text_area.width;
     let base_padding = area_width.saturating_sub(max_line_width as u16) / 2;
 
-    for (line_idx, target_line) in app.target_lines.iter().enumerate() {
-        if line_idx > 0 {
-            char_offset += 1;
-        }
-
+    for target_line in app.target_lines.iter() {
         let mut spans: Vec<Span> = Vec::new();
 
         if base_padding > 0 {
@@ -363,7 +370,7 @@ fn ui(frame: &mut Frame, app: &App) {
         }
 
         lines.push(Line::from(spans));
-        char_offset += target_line.len();
+        char_offset += target_line.len() + 1;
     }
 
     let (cursor_line, cursor_col) = app.cursor_pos();
@@ -404,7 +411,7 @@ fn ui(frame: &mut Frame, app: &App) {
     if !stats_text.is_empty() {
         let stats = Paragraph::new(stats_text).style(
             Style::default()
-                .fg(app.theme.correct_fg)
+                .fg(app.theme.stats_fg)
                 .add_modifier(Modifier::BOLD),
         );
         frame.render_widget(stats, stats_area);

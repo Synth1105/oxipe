@@ -1,6 +1,6 @@
 # oxipe
 
-A fast, customizable terminal-based typing speed test and practice application built with Rust.
+A fast, customizable terminal-based typing speed test and practice application built with Rust and ratatui.
 
 ## Features
 
