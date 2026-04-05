@@ -73,29 +73,11 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p release-assets
-          gh release download v${{ steps.get_version.outputs.VERSION }} \
-            --dir release-assets \
-            --pattern "*.tar.gz"
-
       - name: Calculate SHA256 for source tarball
         id: source_sha
         run: |
           curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz" -o source.tar.gz
           echo "SHA=$(sha256sum source.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Calculate SHA256 for binary assets
-        id: binary_shas
-        run: |
-          for f in release-assets/*.tar.gz; do
-            name=$(basename "$f")
-            sha=$(sha256sum "$f" | awk '{print $1}')
-            echo "$name=$sha" >> $GITHUB_OUTPUT
-          done
 
       - name: Update Formula
         run: |
@@ -103,29 +85,34 @@ jobs:
           SOURCE_SHA="${{ steps.source_sha.sha }}"
           REPO="${{ github.repository }}"
 
-          cat > Formula/oxipe.rb << 'FORMULA_EOF'
-class Oxipe < Formula
-  desc "A fast, customizable terminal-based typing speed test and practice application"
-  homepage "https://github.com/REPO_PLACEHOLDER"
-  url "https://github.com/REPO_PLACEHOLDER/archive/refs/tags/vVERSION_PLACEHOLDER.tar.gz"
-  sha256 "SOURCE_SHA_PLACEHOLDER"
-  license "LGPL-2.1"
+          python3 << PYEOF
+          import os
+          repo = os.environ["REPO"]
+          version = os.environ["VERSION"]
+          sha = os.environ["SOURCE_SHA"]
 
-  depends_on "rust" => :build
+          formula = f'''class Oxipe < Formula
+            desc "A fast, customizable terminal-based typing speed test and practice application"
+            homepage "https://github.com/{repo}"
+            url "https://github.com/{repo}/archive/refs/tags/v{version}.tar.gz"
+            sha256 "{sha}"
+            license "LGPL-2.1"
 
-  def install
-    system "cargo", "install", *std_cargo_args
-  end
+            depends_on "rust" => :build
 
-  test do
-    assert_match "oxipe", shell_output("#{bin}/oxipe --help", 2)
-  end
-end
-FORMULA_EOF
+            def install
+              system "cargo", "install", *std_cargo_args
+            end
 
-          sed -i "s/REPO_PLACEHOLDER/$REPO/g" Formula/oxipe.rb
-          sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" Formula/oxipe.rb
-          sed -i "s/SOURCE_SHA_PLACEHOLDER/$SOURCE_SHA/g" Formula/oxipe.rb
+            test do
+              assert_match "oxipe", shell_output("\#{bin}/oxipe --help", 2)
+            end
+          end
+          '''
+
+          with open("Formula/oxipe.rb", "w") as f:
+              f.write(formula)
+          PYEOF
 
       - name: Commit and push updated Formula
         run: |
