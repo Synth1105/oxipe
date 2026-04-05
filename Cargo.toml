@@ -1,9 +1,14 @@
 [package]
 name = "oxipe"
-description = "Minimal typing test"
+description = "A fast, customizable terminal-based typing speed test and practice application"
 version = "0.3.0"
 edition = "2024"
-license-file = "LICENSE"
+license = "LGPL-2.1"
+repository = "https://github.com/Synth1105/oxipe"
+homepage = "https://github.com/Synth1105/oxipe"
+readme = "README.md"
+keywords = ["typing", "terminal", "tui", "speed-test", "practice"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 crossterm = "0.29.0"
